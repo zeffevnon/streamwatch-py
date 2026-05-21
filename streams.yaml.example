@@ -1,0 +1,7 @@
+streams:
+- name: MyStreamer
+  url: https://www.youtube.com/@MyStreamer/live
+  output: D:\recordings\MyStreamer
+  # icon: C:\path\to\icon.jpg   # optional profile image
+  # auto_record: true           # start recording immediately, skip notification
+  # archived: true              # hide from Watching tab, stop monitoring

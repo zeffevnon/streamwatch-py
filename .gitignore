@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Runtime state & logs
+logs/
+state/state.json
+
+# Personal config — not for sharing
+streams.yaml
+settings.json
+icon/
+
+# Editor / OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
