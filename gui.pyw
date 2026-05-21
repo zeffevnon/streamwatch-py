@@ -141,25 +141,23 @@ def _make_tray_image() -> "Image.Image":
     return img
 
 
-# ------------------------------------------------------------------ startup shortcut
+# ------------------------------------------------------------------ shortcuts
 
-_STARTUP_DIR      = Path(os.environ.get("APPDATA", "")) / "Microsoft" / "Windows" / \
-                    "Start Menu" / "Programs" / "Startup"
-_STARTUP_SHORTCUT = _STARTUP_DIR / "streamwatch.lnk"
+_APPDATA      = Path(os.environ.get("APPDATA", ""))
+_USERPROFILE  = Path(os.environ.get("USERPROFILE", ""))
+
+_STARTUP_SHORTCUT  = _APPDATA / "Microsoft/Windows/Start Menu/Programs/Startup/streamwatch.lnk"
+_STARTMENU_SHORTCUT = _APPDATA / "Microsoft/Windows/Start Menu/Programs/streamwatch.lnk"
+_DESKTOP_SHORTCUT  = _USERPROFILE / "Desktop/streamwatch.lnk"
 
 
-def _startup_is_enabled() -> bool:
-    return _STARTUP_SHORTCUT.exists()
-
-
-def _set_startup(enable: bool):
+def _manage_shortcut(dest: Path, enable: bool):
     if enable:
         pythonw  = str(Path(sys.executable).with_name("pythonw.exe"))
         gui_pyw  = str(streamwatch.SCRIPT_DIR / "gui.pyw")
         work_dir = str(streamwatch.SCRIPT_DIR)
-        shortcut = str(_STARTUP_SHORTCUT)
         ps = (
-            f"$s = (New-Object -ComObject WScript.Shell).CreateShortcut('{shortcut}');"
+            f"$s = (New-Object -ComObject WScript.Shell).CreateShortcut('{dest}');"
             f"$s.TargetPath = '{pythonw}';"
             f"$s.Arguments = '\"{gui_pyw}\"';"
             f"$s.WorkingDirectory = '{work_dir}';"
@@ -178,7 +176,12 @@ def _set_startup(enable: bool):
         finally:
             Path(ps_path).unlink(missing_ok=True)
     else:
-        _STARTUP_SHORTCUT.unlink(missing_ok=True)
+        dest.unlink(missing_ok=True)
+
+
+def _startup_is_enabled()   -> bool: return _STARTUP_SHORTCUT.exists()
+def _startmenu_is_enabled() -> bool: return _STARTMENU_SHORTCUT.exists()
+def _desktop_is_enabled()   -> bool: return _DESKTOP_SHORTCUT.exists()
 
 
 class App(ctk.CTk):
@@ -1187,6 +1190,24 @@ class App(ctk.CTk):
                         variable=self._close_to_tray_var,
                         command=self._autosave_settings).pack(
                             anchor="w", padx=8, pady=(0, 4))
+
+        shortcut_row = ctk.CTkFrame(win_card, fg_color="transparent")
+        shortcut_row.pack(fill="x", padx=8, pady=(0, 4))
+
+        self._desktop_var = ctk.BooleanVar(value=_desktop_is_enabled())
+        ctk.CTkCheckBox(shortcut_row, text="Desktop icon",
+                        variable=self._desktop_var,
+                        command=self._toggle_desktop).pack(side="left", padx=(0, 24))
+
+        self._startmenu_var = ctk.BooleanVar(value=_startmenu_is_enabled())
+        ctk.CTkCheckBox(shortcut_row, text="Start Menu shortcut",
+                        variable=self._startmenu_var,
+                        command=self._toggle_startmenu).pack(side="left")
+
+        self._shortcut_status = ctk.CTkLabel(win_card, text="",
+                                              text_color=_GREY,
+                                              font=ctk.CTkFont(size=11))
+        self._shortcut_status.pack(anchor="w", padx=8)
         ctk.CTkFrame(win_card, height=8, fg_color="transparent").pack()
 
         # ---- Notifications ----
@@ -1328,7 +1349,7 @@ class App(ctk.CTk):
     def _toggle_startup(self):
         enable = self._startup_var.get()
         try:
-            _set_startup(enable)
+            _manage_shortcut(_STARTUP_SHORTCUT, enable)
             if _startup_is_enabled() == enable:
                 msg   = "Will start at login." if enable else "Startup entry removed."
                 color = _GREEN
@@ -1340,6 +1361,26 @@ class App(ctk.CTk):
         self._startup_status.configure(text=msg, text_color=color)
         self.after(3000, lambda: self._startup_status.configure(text=""))
         self._autosave_settings()
+
+    def _toggle_desktop(self):
+        self._toggle_shortcut(_DESKTOP_SHORTCUT, self._desktop_var, _desktop_is_enabled)
+
+    def _toggle_startmenu(self):
+        self._toggle_shortcut(_STARTMENU_SHORTCUT, self._startmenu_var, _startmenu_is_enabled)
+
+    def _toggle_shortcut(self, dest: Path, var: ctk.BooleanVar, checker):
+        enable = var.get()
+        try:
+            _manage_shortcut(dest, enable)
+            if checker() == enable:
+                msg, color = ("Shortcut created." if enable else "Shortcut removed."), _GREEN
+            else:
+                raise RuntimeError("operation failed")
+        except Exception as e:
+            var.set(not enable)
+            msg, color = f"Failed: {e}", _RED
+        self._shortcut_status.configure(text=msg, text_color=color)
+        self.after(3000, lambda: self._shortcut_status.configure(text=""))
 
     def _update_streamwatch(self):
         self._maint_status.configure(text="Pulling latest changes…", text_color=_GREY)
