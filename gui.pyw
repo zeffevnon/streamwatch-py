@@ -1317,13 +1317,14 @@ class App(ctk.CTk):
 
         def run():
             steps = [
-                ("Pulling latest code…",        ["git", "pull"],
+                ("Pulling latest code…",   ["git", "pull"],
                  {"cwd": str(streamwatch.SCRIPT_DIR), "timeout": 30}),
-                ("Updating dependencies…",       ["pip", "install", "--upgrade", "-r",
+                ("Updating dependencies…", ["pip", "install", "--upgrade", "-r",
                  str(streamwatch.SCRIPT_DIR / "requirements.txt")],
                  {"timeout": 180}),
             ]
-            for status_msg, cmd, kwargs in steps:
+            pulled_changes = False
+            for i, (status_msg, cmd, kwargs) in enumerate(steps):
                 self.after(0, lambda m=status_msg: self._maint_status.configure(
                     text=m, text_color=_GREY))
                 try:
@@ -1337,14 +1338,52 @@ class App(ctk.CTk):
                         self.after(0, lambda m=msg: self._maint_status.configure(
                             text=m, text_color=_RED))
                         return
+                    if i == 0:
+                        pulled_changes = "already up to date" not in \
+                            (result.stdout + result.stderr).lower()
                 except Exception as e:
                     self.after(0, lambda m=str(e): self._maint_status.configure(
                         text=f"Error: {m}", text_color=_RED))
                     return
-            self.after(0, lambda: self._maint_status.configure(
-                text="All up to date.", text_color=_GREEN))
+
+            if pulled_changes:
+                self.after(0, lambda: self._maint_status.configure(
+                    text="Update complete.", text_color=_GREEN))
+                self.after(0, self._prompt_restart)
+            else:
+                self.after(0, lambda: self._maint_status.configure(
+                    text="Already up to date.", text_color=_GREY))
 
         threading.Thread(target=run, daemon=True).start()
+
+    def _prompt_restart(self):
+        dlg = ctk.CTkToplevel(self)
+        dlg.title("Restart streamwatch")
+        dlg.geometry("380x120")
+        dlg.resizable(False, False)
+        dlg.grab_set()
+        dlg.lift()
+        ctk.CTkLabel(dlg,
+                     text="Updates applied. Restart streamwatch to use the new version.",
+                     wraplength=340, anchor="w", justify="left").pack(
+                         padx=20, pady=(20, 12), fill="x")
+        btn_row = ctk.CTkFrame(dlg, fg_color="transparent")
+        btn_row.pack(pady=(0, 14))
+        ctk.CTkButton(btn_row, text="Restart Now",
+                      command=lambda: [dlg.destroy(), self._restart_app()]
+                      ).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(btn_row, text="Later",
+                      fg_color="#444444", hover_color="#555555",
+                      command=dlg.destroy).pack(side="left")
+
+    def _restart_app(self):
+        subprocess.Popen(
+            [str(Path(sys.executable).with_name("pythonw.exe")),
+             str(streamwatch.SCRIPT_DIR / "gui.pyw")],
+            cwd=str(streamwatch.SCRIPT_DIR),
+            creationflags=_NO_WINDOW,
+        )
+        self._quit_from_tray()
 
     def _toggle_startup(self):
         enable = self._startup_var.get()
