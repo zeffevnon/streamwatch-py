@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 gui.pyw - streamwatch GUI entry point.
-Dark-themed window with Watching / Streams / Recordings / Quick Tools tabs.
+Dark-themed window with Watching / Streams / Recordings / Quick Tools / Settings tabs.
 Runs the monitor loop in a background thread.
 """
 
@@ -11,22 +11,21 @@ import queue
 import re
 import subprocess
 import sys
-import threading
 import tempfile
-
-_NO_WINDOW = subprocess.CREATE_NO_WINDOW
+import threading
 import time
 import tkinter as tk
 import webbrowser
-
-import pystray
 from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog
 
 import customtkinter as ctk
-from PIL import Image, ImageDraw, ImageFont
+import pystray
 import yaml
+from PIL import Image, ImageDraw, ImageFont
+
+_NO_WINDOW = subprocess.CREATE_NO_WINDOW
 
 import streamwatch
 
@@ -103,22 +102,27 @@ def _get_platform(url: str) -> str:
     return ""
 
 
-def _find_player() -> str:
-    """Return media player executable path from settings, then common PotPlayer locations."""
-    settings = _load_settings()
-    custom = settings.get("player_path", "").strip()
-    if custom and Path(custom).exists():
-        return custom
-    candidates = [
-        r"C:\Program Files\DAUM\PotPlayer\PotPlayerMini64.exe",
-        r"C:\Program Files (x86)\DAUM\PotPlayer\PotPlayerMini64.exe",
-        r"C:\Program Files\DAUM\PotPlayer\PotPlayerMini.exe",
-        r"C:\Program Files (x86)\DAUM\PotPlayer\PotPlayerMini.exe",
-    ]
-    for p in candidates:
-        if Path(p).exists():
-            return p
-    return "potplayer"
+def _custom_player() -> str:
+    """Return the custom player exe from settings, or empty string if not set."""
+    custom = _load_settings().get("player_path", "").strip()
+    return custom if custom and Path(custom).exists() else ""
+
+
+def _player_label() -> str:
+    """Human-readable player name for menu labels."""
+    path = _custom_player()
+    if not path:
+        return "Player"
+    stem = Path(path).stem.lower()
+    if "potplayer" in stem:
+        return "PotPlayer"
+    if "vlc" in stem:
+        return "VLC"
+    if "mpv" in stem:
+        return "mpv"
+    if "mpc" in stem:
+        return "MPC"
+    return Path(path).stem
 
 
 # ------------------------------------------------------------------ tray image
@@ -415,8 +419,8 @@ class App(ctk.CTk):
                        bg="#252525", fg="#d0d0d0",
                        activebackground="#3d3d3d", activeforeground="white",
                        borderwidth=1, relief="flat")
-        menu.add_command(label="Open in PotPlayer",
-                         command=lambda: self._open_in_potplayer(stream))
+        menu.add_command(label=f"Open in {_player_label()}",
+                         command=lambda: self._open_in_player(stream))
         menu.add_command(label="Open in Browser",
                          command=lambda: webbrowser.open(stream["url"]))
         menu.add_command(label="Open Folder",
@@ -503,27 +507,28 @@ class App(ctk.CTk):
         folder.mkdir(parents=True, exist_ok=True)
         subprocess.Popen(["explorer", str(folder)])
 
-    def _open_in_potplayer(self, stream: dict):
-        """Launch streamlink → PotPlayer in a thread; surface any error in a dialog."""
-        def run():
-            player = _find_player()
-            proc = subprocess.Popen(
-                ["streamlink", "--player", player, stream["url"], "best"],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                creationflags=_NO_WINDOW,
-            )
-            try:
-                _, stderr = proc.communicate(timeout=10)
-                if proc.returncode != 0:
-                    msg = next(
-                        (l.strip() for l in stderr.splitlines() if "error:" in l.lower()),
-                        stderr.strip() or "streamlink exited with an error.",
-                    )
-                    self.after(0, lambda m=msg: self._show_error("PotPlayer / streamlink error", m))
-            except subprocess.TimeoutExpired:
-                pass  # still running after 10 s → stream opened successfully
-
-        threading.Thread(target=run, daemon=True).start()
+    def _open_in_player(self, stream: dict):
+        player = _custom_player()
+        if player:
+            def run():
+                proc = subprocess.Popen(
+                    ["streamlink", "--player", player, stream["url"], "best"],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                    creationflags=_NO_WINDOW,
+                )
+                try:
+                    _, stderr = proc.communicate(timeout=10)
+                    if proc.returncode != 0:
+                        msg = next(
+                            (l.strip() for l in stderr.splitlines() if "error:" in l.lower()),
+                            stderr.strip() or "streamlink exited with an error.",
+                        )
+                        self.after(0, lambda m=msg: self._show_error("Player / streamlink error", m))
+                except subprocess.TimeoutExpired:
+                    pass
+            threading.Thread(target=run, daemon=True).start()
+        else:
+            os.startfile(stream["url"])
 
     def _show_error(self, title: str, message: str):
         dlg = ctk.CTkToplevel(self)
@@ -564,7 +569,7 @@ class App(ctk.CTk):
         fields = [
             ("Name",          "e.g. MyStreamer",          None),
             ("URL",           "e.g. https://...",         None),
-            ("Output folder", r"e.g. P:\streamwatch\...", "dir"),
+            ("Output folder", r"e.g. D:\recordings\MyStreamer", "dir"),
             ("Icon path",     "optional — absolute path", "file"),
         ]
         self._form_entries: dict[str, ctk.CTkEntry] = {}
@@ -1121,8 +1126,8 @@ class App(ctk.CTk):
                      font=ctk.CTkFont(size=13, weight="bold")).pack(
                          anchor="w", padx=8, pady=(8, 4))
         ctk.CTkLabel(mp_card,
-                     text="Used by 'Open in Player' in the Watching tab. Leave blank to auto-detect PotPlayer.",
-                     text_color=_GREY, font=ctk.CTkFont(size=11)).pack(
+                     text="Optional. When set, live streams open via streamlink piped to this player. Leave blank to open in your system default.",
+                     text_color=_GREY, font=ctk.CTkFont(size=11), wraplength=560).pack(
                          anchor="w", padx=8, pady=(0, 6))
 
         player_row = ctk.CTkFrame(mp_card, fg_color="transparent")
@@ -1130,7 +1135,7 @@ class App(ctk.CTk):
         ctk.CTkLabel(player_row, text="Executable", width=100, anchor="w").pack(side="left")
         self._settings_player_entry = ctk.CTkEntry(
             player_row,
-            placeholder_text=r"e.g. C:\Program Files\...\PotPlayerMini64.exe")
+            placeholder_text=r"e.g. C:\Program Files\VideoLAN\VLC\vlc.exe")
         self._settings_player_entry.pack(side="left", fill="x", expand=True, padx=(0, 4))
         if s.get("player_path"):
             self._settings_player_entry.insert(0, s["player_path"])
@@ -1174,6 +1179,11 @@ class App(ctk.CTk):
                                              text_color=_GREY,
                                              font=ctk.CTkFont(size=11))
         self._startup_status.pack(side="left", padx=(12, 0))
+
+        self._close_to_tray_var = ctk.BooleanVar(value=s.get("close_to_tray", False))
+        ctk.CTkCheckBox(win_card, text="Close to system tray",
+                        variable=self._close_to_tray_var).pack(
+                            anchor="w", padx=8, pady=(0, 4))
         ctk.CTkFrame(win_card, height=8, fg_color="transparent").pack()
 
         # ---- Notifications ----
@@ -1223,12 +1233,8 @@ class App(ctk.CTk):
 
         maint_btn_row = ctk.CTkFrame(maint_card, fg_color="transparent")
         maint_btn_row.pack(anchor="w", padx=8, pady=(0, 6))
-        ctk.CTkButton(maint_btn_row, text="Update yt-dlp",
-                      command=self._update_ytdlp).pack(side="left", padx=(0, 8))
-        ctk.CTkButton(maint_btn_row, text="Update streamlink",
-                      command=self._update_streamlink).pack(side="left", padx=(0, 8))
-        ctk.CTkButton(maint_btn_row, text="Update streamwatch",
-                      command=self._update_streamwatch).pack(side="left")
+        ctk.CTkButton(maint_btn_row, text="Update All",
+                      command=self._update_all).pack(side="left")
 
         self._maint_status = ctk.CTkLabel(maint_card, text="",
                                            text_color=_GREY,
@@ -1269,6 +1275,7 @@ class App(ctk.CTk):
             "player_path":            self._settings_player_entry.get().strip(),
             "default_output":         self._settings_output_entry.get().strip(),
             "notifications_enabled":  self._settings_notif_var.get(),
+            "close_to_tray":          self._close_to_tray_var.get(),
             "max_reminders":          max_rem,
             "reminder_interval_min":  rem_interval,
             "poll_interval":          poll_interval,
@@ -1284,44 +1291,37 @@ class App(ctk.CTk):
         self._settings_status.configure(text="Settings saved.", text_color=_GREEN)
         self.after(2500, lambda: self._settings_status.configure(text=""))
 
-    def _update_ytdlp(self):
-        self._maint_status.configure(text="Updating yt-dlp…", text_color=_GREY)
+    def _update_all(self):
+        self._maint_status.configure(text="Updating streamwatch…", text_color=_GREY)
 
         def run():
-            try:
-                result = subprocess.run(
-                    ["yt-dlp", "-U"], capture_output=True, text=True, timeout=60,
-                    creationflags=_NO_WINDOW)
-                lines = [l.strip() for l in
-                         (result.stdout + result.stderr).splitlines() if l.strip()]
-                msg = "\n".join(lines[-3:]) or "Done."
-                color = _GREEN if result.returncode == 0 else _RED
-                self.after(0, lambda m=msg, c=color: self._maint_status.configure(
-                    text=m, text_color=c))
-            except Exception as e:
-                self.after(0, lambda: self._maint_status.configure(
-                    text=f"Error: {e}", text_color=_RED))
-
-        threading.Thread(target=run, daemon=True).start()
-
-    def _update_streamlink(self):
-        self._maint_status.configure(text="Updating streamlink…", text_color=_GREY)
-
-        def run():
-            try:
-                result = subprocess.run(
-                    ["pip", "install", "--upgrade", "streamlink"],
-                    capture_output=True, text=True, timeout=120,
-                    creationflags=_NO_WINDOW)
-                lines = [l.strip() for l in
-                         (result.stdout + result.stderr).splitlines() if l.strip()]
-                msg = "\n".join(lines[-3:]) or "Done."
-                color = _GREEN if result.returncode == 0 else _RED
-                self.after(0, lambda m=msg, c=color: self._maint_status.configure(
-                    text=m, text_color=c))
-            except Exception as e:
-                self.after(0, lambda: self._maint_status.configure(
-                    text=f"Error: {e}", text_color=_RED))
+            steps = [
+                ("Pulling latest code…",        ["git", "pull"],
+                 {"cwd": str(streamwatch.SCRIPT_DIR), "timeout": 30}),
+                ("Updating dependencies…",       ["pip", "install", "--upgrade", "-r",
+                 str(streamwatch.SCRIPT_DIR / "requirements.txt")],
+                 {"timeout": 180}),
+            ]
+            for status_msg, cmd, kwargs in steps:
+                self.after(0, lambda m=status_msg: self._maint_status.configure(
+                    text=m, text_color=_GREY))
+                try:
+                    result = subprocess.run(
+                        cmd, capture_output=True, text=True,
+                        creationflags=_NO_WINDOW, **kwargs)
+                    if result.returncode != 0:
+                        lines = [l.strip() for l in
+                                 (result.stdout + result.stderr).splitlines() if l.strip()]
+                        msg = "\n".join(lines[-3:]) or "Command failed."
+                        self.after(0, lambda m=msg: self._maint_status.configure(
+                            text=m, text_color=_RED))
+                        return
+                except Exception as e:
+                    self.after(0, lambda m=str(e): self._maint_status.configure(
+                        text=f"Error: {m}", text_color=_RED))
+                    return
+            self.after(0, lambda: self._maint_status.configure(
+                text="All up to date.", text_color=_GREEN))
 
         threading.Thread(target=run, daemon=True).start()
 
@@ -1406,8 +1406,10 @@ class App(ctk.CTk):
     # ------------------------------------------------------------------ shutdown
 
     def _on_close(self):
-        """Hide to system tray — use Quit from the tray menu to fully exit."""
-        self.withdraw()
+        if _load_settings().get("close_to_tray", False):
+            self.withdraw()
+        else:
+            self._quit_from_tray()
 
 
 if __name__ == "__main__":
