@@ -10,9 +10,9 @@ A Windows desktop app that watches livestream URLs and notifies you when they go
 - **Auto-record** mode — recording starts the moment a stream goes live, no click needed
 - **Parallel polling** — all streams checked simultaneously, first poll is fast
 - **Recording management** — start/stop from the GUI, auto-restart if a CDN drop kills the stream
-- **System tray** — minimizes to tray, keeps running in the background
+- **System tray** — close button hides to tray (optional, toggle in Settings); right-click for Show / Quit
 - **Run at startup** — optional Windows startup entry (toggle in Settings)
-- **Self-updating** — pull the latest version from the Maintenance tab
+- **One-click updates** — Update All in Maintenance pulls the latest code and upgrades dependencies
 - **Quick Tools** — one-off record or download without adding a stream to your list
 
 ## Requirements
@@ -25,7 +25,7 @@ A Windows desktop app that watches livestream URLs and notifies you when they go
 Install Python dependencies:
 
 ```
-pip install customtkinter pillow pyyaml windows-toasts pystray
+pip install -r requirements.txt
 ```
 
 ## Setup

@@ -1126,8 +1126,8 @@ class App(ctk.CTk):
                      font=ctk.CTkFont(size=13, weight="bold")).pack(
                          anchor="w", padx=8, pady=(8, 4))
         ctk.CTkLabel(mp_card,
-                     text="Optional. When set, live streams open via streamlink piped to this player. Leave blank to open in your system default.",
-                     text_color=_GREY, font=ctk.CTkFont(size=11), wraplength=560).pack(
+                     text="Optional. When set, live streams open via streamlink piped to this player. Leave blank to use your system default.",
+                     text_color=_GREY, font=ctk.CTkFont(size=11)).pack(
                          anchor="w", padx=8, pady=(0, 6))
 
         player_row = ctk.CTkFrame(mp_card, fg_color="transparent")
@@ -1139,6 +1139,7 @@ class App(ctk.CTk):
         self._settings_player_entry.pack(side="left", fill="x", expand=True, padx=(0, 4))
         if s.get("player_path"):
             self._settings_player_entry.insert(0, s["player_path"])
+        self._settings_player_entry.bind("<FocusOut>", self._autosave_settings)
         ctk.CTkButton(player_row, text="Browse…", width=80,
                       command=self._browse_player_exe).pack(side="left")
 
@@ -1158,6 +1159,7 @@ class App(ctk.CTk):
         self._settings_output_entry.pack(side="left", fill="x", expand=True, padx=(0, 4))
         if s.get("default_output"):
             self._settings_output_entry.insert(0, s["default_output"])
+        self._settings_output_entry.bind("<FocusOut>", self._autosave_settings)
         ctk.CTkButton(output_row, text="Browse…", width=80,
                       command=lambda e=self._settings_output_entry: self._browse_output(e)
                       ).pack(side="left")
@@ -1182,7 +1184,8 @@ class App(ctk.CTk):
 
         self._close_to_tray_var = ctk.BooleanVar(value=s.get("close_to_tray", False))
         ctk.CTkCheckBox(win_card, text="Close to system tray",
-                        variable=self._close_to_tray_var).pack(
+                        variable=self._close_to_tray_var,
+                        command=self._autosave_settings).pack(
                             anchor="w", padx=8, pady=(0, 4))
         ctk.CTkFrame(win_card, height=8, fg_color="transparent").pack()
 
@@ -1196,7 +1199,8 @@ class App(ctk.CTk):
         self._settings_notif_var = ctk.BooleanVar(
             value=s.get("notifications_enabled", True))
         ctk.CTkCheckBox(notif_card, text="Enable toast notifications",
-                        variable=self._settings_notif_var).pack(
+                        variable=self._settings_notif_var,
+                        command=self._autosave_settings).pack(
                             anchor="w", padx=8, pady=(0, 4))
 
         def _notif_row(parent, label: str, default: int, unit: str):
@@ -1222,6 +1226,8 @@ class App(ctk.CTk):
             notif_card, "Poll interval",
             s.get("poll_interval", streamwatch.POLL_INTERVAL),
             "seconds")
+        for entry in (self._settings_max_rem, self._settings_rem_intv, self._settings_poll_intv):
+            entry.bind("<FocusOut>", self._autosave_settings)
         ctk.CTkFrame(notif_card, height=8, fg_color="transparent").pack()
 
         # ---- Maintenance ----
@@ -1242,15 +1248,11 @@ class App(ctk.CTk):
                                            wraplength=500)
         self._maint_status.pack(anchor="w", padx=8, pady=(0, 8))
 
-        # ---- Save ----
-        save_row = ctk.CTkFrame(outer, fg_color="transparent")
-        save_row.pack(anchor="w", padx=4, pady=(0, 12))
-        ctk.CTkButton(save_row, text="Save Settings",
-                      command=self._on_save_settings).pack(side="left", padx=4)
-        self._settings_status = ctk.CTkLabel(save_row, text="",
-                                              text_color=_GREY,
-                                              font=ctk.CTkFont(size=11))
-        self._settings_status.pack(side="left", padx=(8, 0))
+        # ---- Version ----
+        ctk.CTkLabel(maint_card,
+                     text=f"streamwatch v{streamwatch.__version__}",
+                     text_color=_GREY, font=ctk.CTkFont(size=11)).pack(
+                         anchor="w", padx=8, pady=(0, 8))
 
     def _browse_player_exe(self):
         path = filedialog.askopenfilename(
@@ -1260,36 +1262,34 @@ class App(ctk.CTk):
         if path:
             self._settings_player_entry.delete(0, "end")
             self._settings_player_entry.insert(0, path)
+            self._autosave_settings()
 
-    def _on_save_settings(self):
+    def _collect_settings(self) -> dict | None:
         try:
-            max_rem      = int(self._settings_max_rem.get())
-            rem_interval = int(self._settings_rem_intv.get())
+            max_rem       = int(self._settings_max_rem.get())
+            rem_interval  = int(self._settings_rem_intv.get())
             poll_interval = int(self._settings_poll_intv.get())
         except ValueError:
-            self._settings_status.configure(
-                text="Reminders and intervals must be whole numbers.", text_color=_RED)
-            return
-
-        data = {
-            "player_path":            self._settings_player_entry.get().strip(),
-            "default_output":         self._settings_output_entry.get().strip(),
-            "notifications_enabled":  self._settings_notif_var.get(),
-            "close_to_tray":          self._close_to_tray_var.get(),
-            "max_reminders":          max_rem,
-            "reminder_interval_min":  rem_interval,
-            "poll_interval":          poll_interval,
+            return None
+        return {
+            "player_path":           self._settings_player_entry.get().strip(),
+            "default_output":        self._settings_output_entry.get().strip(),
+            "notifications_enabled": self._settings_notif_var.get(),
+            "close_to_tray":         self._close_to_tray_var.get(),
+            "max_reminders":         max_rem,
+            "reminder_interval_min": rem_interval,
+            "poll_interval":         poll_interval,
         }
+
+    def _autosave_settings(self, *_):
+        data = self._collect_settings()
+        if data is None:
+            return
         _save_settings(data)
-
-        # Apply immediately to the running monitor
-        streamwatch.MAX_REMINDERS         = max_rem
-        streamwatch.REMINDER_INTERVAL     = rem_interval * 60
-        streamwatch.POLL_INTERVAL         = poll_interval
+        streamwatch.MAX_REMINDERS         = data["max_reminders"]
+        streamwatch.REMINDER_INTERVAL     = data["reminder_interval_min"] * 60
+        streamwatch.POLL_INTERVAL         = data["poll_interval"]
         streamwatch.NOTIFICATIONS_ENABLED = data["notifications_enabled"]
-
-        self._settings_status.configure(text="Settings saved.", text_color=_GREEN)
-        self.after(2500, lambda: self._settings_status.configure(text=""))
 
     def _update_all(self):
         self._maint_status.configure(text="Updating streamwatch…", text_color=_GREY)
@@ -1339,6 +1339,7 @@ class App(ctk.CTk):
             msg, color = f"Failed: {e}", _RED
         self._startup_status.configure(text=msg, text_color=color)
         self.after(3000, lambda: self._startup_status.configure(text=""))
+        self._autosave_settings()
 
     def _update_streamwatch(self):
         self._maint_status.configure(text="Pulling latest changes…", text_color=_GREY)
