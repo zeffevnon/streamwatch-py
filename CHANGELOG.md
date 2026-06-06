@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.2] — 2026-06-06
+
+### Fixed
+- Bootstrap pip install now passes `--break-system-packages` so it works on Linux distros with externally managed Python environments (Debian/Ubuntu 23.04+, Arch, etc.)
+
 ## [1.3.1] — 2026-06-06
 
 ### Fixed

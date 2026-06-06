@@ -75,7 +75,7 @@ def _bootstrap_deps() -> None:
     root.update()
 
     proc = subprocess.Popen(
-        [sys.executable, "-m", "pip", "install", "-r", str(_REQS)],
+        [sys.executable, "-m", "pip", "install", "--break-system-packages", "-r", str(_REQS)],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,

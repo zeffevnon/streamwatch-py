@@ -20,7 +20,7 @@ import urllib.request
 from pathlib import Path
 from datetime import datetime, timedelta
 
-__version__ = "1.3.1"
+__version__ = "1.3.2"
 
 # --- Config ---
 SCRIPT_DIR   = Path(__file__).parent
