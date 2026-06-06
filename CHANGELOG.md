@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3] — 2026-06-06
+
+### Added
+- **Self-installing dependencies** — on first launch, if any required packages are missing, a setup window appears and runs `pip install -r requirements.txt` automatically; the app relaunches itself once the install completes. No manual pip step needed for new users.
+
 ## [1.2] — 2026-06-06
 
 ### Added

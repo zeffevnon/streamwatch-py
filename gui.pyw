@@ -20,6 +20,94 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog
 
+
+def _bootstrap_deps() -> None:
+    """Install missing third-party packages on first run, using only stdlib."""
+    _REQS = Path(__file__).parent / "requirements.txt"
+
+    def _any_missing() -> bool:
+        for name in ("customtkinter", "PIL", "yaml", "pystray"):
+            try:
+                __import__(name)
+            except ImportError:
+                return True
+        return False
+
+    if not _any_missing():
+        return
+
+    root = tk.Tk()
+    root.title("streamwatch — first run setup")
+    root.resizable(False, False)
+    root.configure(bg="#1a1a2e")
+
+    lbl = tk.Label(
+        root,
+        text="Installing dependencies, please wait…",
+        bg="#1a1a2e", fg="#e0e0e0",
+        font=("Segoe UI", 11),
+        pady=12, padx=16,
+    )
+    lbl.pack()
+
+    frame = tk.Frame(root, bg="#1a1a2e")
+    frame.pack(fill="both", expand=True, padx=12, pady=(0, 8))
+
+    sb = tk.Scrollbar(frame)
+    sb.pack(side="right", fill="y")
+
+    txt = tk.Text(
+        frame,
+        width=72, height=16,
+        bg="#0d0d1a", fg="#b0b0c0",
+        font=("Consolas", 9),
+        yscrollcommand=sb.set,
+        state="disabled",
+    )
+    txt.pack(side="left", fill="both", expand=True)
+    sb.config(command=txt.yview)
+
+    root.update()
+
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "pip", "install", "-r", str(_REQS)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+
+    def _poll() -> None:
+        line = proc.stdout.readline()
+        if line:
+            txt.configure(state="normal")
+            txt.insert("end", line)
+            txt.see("end")
+            txt.configure(state="disabled")
+            root.after(50, _poll)
+        elif proc.poll() is None:
+            root.after(50, _poll)
+        else:
+            _done(proc.returncode)
+
+    def _done(rc: int) -> None:
+        if rc == 0:
+            root.destroy()
+            subprocess.Popen([sys.executable] + sys.argv)
+            sys.exit(0)
+        else:
+            lbl.config(text="Install failed — see output above.")
+            tk.Button(
+                root, text="Close",
+                command=lambda: (root.destroy(), sys.exit(1)),
+                bg="#3a3a5c", fg="#e0e0e0", pady=4,
+            ).pack(pady=(0, 10))
+
+    root.after(50, _poll)
+    root.mainloop()
+
+
+_bootstrap_deps()
+
 import customtkinter as ctk
 import pystray
 import yaml

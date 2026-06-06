@@ -24,7 +24,7 @@ A desktop app for Windows and Linux that watches livestream URLs and notifies yo
 - [streamlink](https://streamlink.github.io/) (for "Open in Player")
 - A media player — PotPlayer is auto-detected, or set a custom path in Settings
 
-Install Python dependencies:
+Python dependencies (`customtkinter`, `Pillow`, `PyYAML`, `pystray`, platform notification lib) are installed automatically on first launch. If you prefer to install them manually:
 
 ```
 pip install -r requirements.txt
