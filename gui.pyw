@@ -14,7 +14,12 @@ import sys
 import tempfile
 import threading
 import time
-import tkinter as tk
+try:
+    import tkinter as tk
+except ImportError:
+    print("\nstreamwatch requires python3-tk on Linux.")
+    print("Install it with:  sudo apt install python3-tk\n")
+    import sys as _sys; _sys.exit(1)
 import webbrowser
 from datetime import datetime
 from pathlib import Path

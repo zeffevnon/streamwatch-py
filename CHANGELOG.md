@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.1] — 2026-06-06
+
+### Fixed
+- Duplicate `import webbrowser` removed from `gui.pyw`
+- `import tkinter` now wrapped in a try/except on Linux — prints a clear install hint (`sudo apt install python3-tk`) and exits cleanly instead of crashing with a raw ImportError
+
 ## [1.3] — 2026-06-06
 
 ### Added
