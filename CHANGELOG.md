@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2] — 2026-06-06
+
+### Added
+- **Linux support** — notifications via `desktop-notifier`, process-tree kill via `os.killpg`, file/folder/URL opening via `xdg-open`, `.desktop` shortcuts for startup and application menus
+- **`streamwatch.bat` / `streamwatch.sh`** launchers at project root — double-click on Windows, `./streamwatch.sh` on Linux; no need to invoke Python manually
+- **Auto-update banner** — checks for new upstream commits 3 seconds after launch; shows a dismissible stripe above the tabs with commit count and latest message; one-click Update & Restart flow; toggle in Settings → Windows
+- **Output path resilience** — if a stream's output directory is on an unavailable network drive at startup, the app no longer crashes; affected streams show `⚠ Path missing` with the broken path as the subtitle in the Watching tab, and recording attempts are skipped with a clear log entry
+
+### Changed
+- `requirements.txt` uses PEP 508 platform markers — `windows-toasts` installs on Windows only, `desktop-notifier` on Linux only
+- `settings.json.example` updated with `close_to_tray` and `auto_update_check` keys
+
 ## [1.1] — 2026-05-21
 
 ### Added

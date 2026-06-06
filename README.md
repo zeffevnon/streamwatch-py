@@ -1,17 +1,19 @@
 # streamwatch
 
-A Windows desktop app that watches livestream URLs and notifies you when they go live. Supports YouTube, Twitch, Chaturbate, Kick, and anything else yt-dlp can handle.
+A desktop app for Windows and Linux that watches livestream URLs and notifies you when they go live. Supports YouTube, Twitch, Chaturbate, Kick, and anything else yt-dlp can handle.
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![Platform](https://img.shields.io/badge/platform-Windows-lightgrey)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue) ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey)
 
 ## Features
 
-- **Toast notifications** with Record / Dismiss buttons — click Record and it starts immediately
+- **Desktop notifications** with Record / Dismiss buttons — click Record and it starts immediately
 - **Auto-record** mode — recording starts the moment a stream goes live, no click needed
 - **Parallel polling** — all streams checked simultaneously, first poll is fast
 - **Recording management** — start/stop from the GUI, auto-restart if a CDN drop kills the stream
+- **Output path resilience** — if a stream's output folder is on an unavailable network drive, the app starts cleanly and shows ⚠ Path missing in the Watching tab instead of crashing
 - **System tray** — close button hides to tray (optional, toggle in Settings); right-click for Show / Quit
-- **Run at startup** — optional Windows startup entry (toggle in Settings)
+- **Run at startup** — optional startup entry (toggle in Settings); creates a `.lnk` on Windows or a `.desktop` file on Linux
+- **Auto-update banner** — checks for new commits on launch and shows a one-click Update & Restart stripe if an update is available
 - **One-click updates** — Update All in Maintenance pulls the latest code and upgrades dependencies
 - **Quick Tools** — one-off record or download without adding a stream to your list
 
@@ -45,10 +47,11 @@ streams:
 
 ## Running
 
-Double-click `gui.pyw`, or:
+Double-click `streamwatch.bat` (Windows) or run `./streamwatch.sh` (Linux), or launch directly:
 
 ```
-pythonw gui.pyw
+pythonw gui.pyw    # Windows
+python3 gui.pyw    # Linux
 ```
 
 The app minimizes to the system tray when you close the window. Use **Quit** from the tray icon to fully exit.
@@ -65,10 +68,12 @@ The app minimizes to the system tray when you close the window. Use **Quit** fro
 
 ## Updating
 
-In the **Settings → Maintenance** tab, click **Update streamwatch** to pull the latest changes from GitHub. Also works from the command line:
+When new commits are available, a banner appears at the top of the window on next launch. Click **Update & Restart** to apply in one step.
+
+You can also go to **Settings → Maintenance → Update All**, or from the command line:
 
 ```
-git pull
+git pull && pip install --upgrade -r requirements.txt
 ```
 
 ## License

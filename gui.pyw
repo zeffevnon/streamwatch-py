@@ -25,7 +25,7 @@ import pystray
 import yaml
 from PIL import Image, ImageDraw, ImageFont
 
-_NO_WINDOW = subprocess.CREATE_NO_WINDOW
+_NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
 import streamwatch
 
@@ -125,6 +125,13 @@ def _player_label() -> str:
     return Path(path).stem
 
 
+def _open_path(path_or_url: str):
+    if sys.platform == "win32":
+        os.startfile(path_or_url)
+    else:
+        subprocess.Popen(["xdg-open", path_or_url])
+
+
 # ------------------------------------------------------------------ tray image
 
 def _make_tray_image() -> "Image.Image":
@@ -146,35 +153,53 @@ def _make_tray_image() -> "Image.Image":
 _APPDATA      = Path(os.environ.get("APPDATA", ""))
 _USERPROFILE  = Path(os.environ.get("USERPROFILE", ""))
 
-_STARTUP_SHORTCUT  = _APPDATA / "Microsoft/Windows/Start Menu/Programs/Startup/streamwatch.lnk"
-_STARTMENU_SHORTCUT = _APPDATA / "Microsoft/Windows/Start Menu/Programs/streamwatch.lnk"
-_DESKTOP_SHORTCUT  = _USERPROFILE / "Desktop/streamwatch.lnk"
+if sys.platform == "win32":
+    _STARTUP_SHORTCUT   = _APPDATA / "Microsoft/Windows/Start Menu/Programs/Startup/streamwatch.lnk"
+    _STARTMENU_SHORTCUT = _APPDATA / "Microsoft/Windows/Start Menu/Programs/streamwatch.lnk"
+    _DESKTOP_SHORTCUT   = _USERPROFILE / "Desktop/streamwatch.lnk"
+else:
+    _STARTUP_SHORTCUT   = Path.home() / ".config/autostart/streamwatch.desktop"
+    _STARTMENU_SHORTCUT = Path.home() / ".local/share/applications/streamwatch.desktop"
+    _DESKTOP_SHORTCUT   = Path.home() / "Desktop/streamwatch.desktop"
 
 
 def _manage_shortcut(dest: Path, enable: bool):
     if enable:
-        pythonw  = str(Path(sys.executable).with_name("pythonw.exe"))
-        gui_pyw  = str(streamwatch.SCRIPT_DIR / "gui.pyw")
-        work_dir = str(streamwatch.SCRIPT_DIR)
-        ps = (
-            f"$s = (New-Object -ComObject WScript.Shell).CreateShortcut('{dest}');"
-            f"$s.TargetPath = '{pythonw}';"
-            f"$s.Arguments = '\"{gui_pyw}\"';"
-            f"$s.WorkingDirectory = '{work_dir}';"
-            "$s.WindowStyle = 1;"
-            "$s.Save()"
-        )
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".ps1",
-                                         delete=False, encoding="utf-8") as f:
-            f.write(ps)
-            ps_path = f.name
-        try:
-            subprocess.run(
-                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps_path],
-                capture_output=True, creationflags=_NO_WINDOW,
+        if sys.platform == "win32":
+            pythonw  = str(Path(sys.executable).with_name("pythonw.exe"))
+            gui_pyw  = str(streamwatch.SCRIPT_DIR / "gui.pyw")
+            work_dir = str(streamwatch.SCRIPT_DIR)
+            ps = (
+                f"$s = (New-Object -ComObject WScript.Shell).CreateShortcut('{dest}');"
+                f"$s.TargetPath = '{pythonw}';"
+                f"$s.Arguments = '\"{gui_pyw}\"';"
+                f"$s.WorkingDirectory = '{work_dir}';"
+                "$s.WindowStyle = 1;"
+                "$s.Save()"
             )
-        finally:
-            Path(ps_path).unlink(missing_ok=True)
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".ps1",
+                                             delete=False, encoding="utf-8") as f:
+                f.write(ps)
+                ps_path = f.name
+            try:
+                subprocess.run(
+                    ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps_path],
+                    capture_output=True, creationflags=_NO_WINDOW,
+                )
+            finally:
+                Path(ps_path).unlink(missing_ok=True)
+        else:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            entry = (
+                "[Desktop Entry]\n"
+                "Type=Application\n"
+                "Name=streamwatch\n"
+                f"Exec={sys.executable} \"{streamwatch.SCRIPT_DIR / 'gui.pyw'}\"\n"
+                f"Path={streamwatch.SCRIPT_DIR}\n"
+                "Terminal=false\n"
+            )
+            dest.write_text(entry, encoding="utf-8")
+            dest.chmod(0o755)
     else:
         dest.unlink(missing_ok=True)
 
@@ -207,6 +232,8 @@ class App(ctk.CTk):
         self._poll_events()
         self._poll_watching()
         self._setup_tray()
+        self._update_check_done = False
+        self.after(3000, self._kickoff_update_check)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     # ------------------------------------------------------------------ tray
@@ -271,9 +298,30 @@ class App(ctk.CTk):
     # ------------------------------------------------------------------ build
 
     def _build_ui(self):
+        # Update banner (hidden by default; shown when an update is available)
+        self._update_banner = ctk.CTkFrame(self, fg_color="#2d4a6e", height=44)
+        self._update_banner_text = ctk.CTkLabel(
+            self._update_banner, text="", anchor="w",
+            text_color="#ffffff", font=ctk.CTkFont(size=12))
+        self._update_banner_text.pack(side="left", padx=(16, 8), pady=8)
+
+        self._update_banner_btn = ctk.CTkButton(
+            self._update_banner, text="Update & Restart", width=140,
+            fg_color="#1a6eb5", hover_color="#2580c8",
+            command=self._update_from_banner)
+        self._update_banner_btn.pack(side="right", padx=(0, 8), pady=8)
+
+        self._update_banner_dismiss = ctk.CTkButton(
+            self._update_banner, text="Dismiss", width=80,
+            fg_color="transparent", hover_color="#3d5a7e",
+            border_width=1, border_color="#5a7aa0",
+            command=self._dismiss_update_banner)
+        self._update_banner_dismiss.pack(side="right", padx=(0, 8), pady=8)
+        # Banner is NOT packed yet — it appears only when an update is detected
+
         self._tabs = ctk.CTkTabview(self, anchor="nw",
                                     command=self._on_tab_change)
-        self._tabs.pack(fill="both", expand=True, padx=12, pady=12)
+        self._tabs.pack(fill="both", expand=True, padx=12, pady=(12, 12))
 
         self._tab_watching    = self._tabs.add("Watching")
         self._tab_streams     = self._tabs.add("Streams")
@@ -391,6 +439,7 @@ class App(ctk.CTk):
         recording    = name in streamwatch.recording_processes
         reconnecting = name in streamwatch.restart_pending
         live         = name in streamwatch.reminder_counts and not recording and not reconnecting
+        path_ok      = streamwatch.output_path_available(stream.get("output"))
 
         row = self._watching_rows[name]
 
@@ -400,13 +449,24 @@ class App(ctk.CTk):
             row["status"].configure(text="● Recording",      text_color=_RED)
         elif reconnecting:
             row["status"].configure(text="● Reconnecting…",  text_color=_ORANGE)
+        elif not path_ok and not archived:
+            row["status"].configure(text="⚠ Path missing",   text_color=_ORANGE)
         elif live:
             row["status"].configure(text="● Live",           text_color=_GREEN)
         else:
             row["status"].configure(text="○ Offline",        text_color=_YELLOW)
 
-        info = streamwatch.stream_info.get(name, {})
-        row["subtitle"].configure(text=_format_stream_subtitle(info))
+        if not path_ok and not archived and not recording:
+            row["subtitle"].configure(
+                text=f"Output unavailable: {stream.get('output', '(none)')}",
+                text_color=_ORANGE,
+            )
+        else:
+            info = streamwatch.stream_info.get(name, {})
+            row["subtitle"].configure(
+                text=_format_stream_subtitle(info),
+                text_color="#888888",
+            )
 
     def _show_row_menu(self, name: str, btn: ctk.CTkButton):
         config = streamwatch.load_config()
@@ -508,7 +568,7 @@ class App(ctk.CTk):
     def _open_folder(stream: dict):
         folder = Path(stream["output"])
         folder.mkdir(parents=True, exist_ok=True)
-        subprocess.Popen(["explorer", str(folder)])
+        _open_path(str(folder))
 
     def _open_in_player(self, stream: dict):
         player = _custom_player()
@@ -531,7 +591,7 @@ class App(ctk.CTk):
                     pass
             threading.Thread(target=run, daemon=True).start()
         else:
-            os.startfile(stream["url"])
+            _open_path(stream["url"])
 
     def _show_error(self, title: str, message: str):
         dlg = ctk.CTkToplevel(self)
@@ -824,7 +884,7 @@ class App(ctk.CTk):
                          font=ctk.CTkFont(size=12)).pack(
                              side="left", fill="x", expand=True, padx=4)
             ctk.CTkButton(row, text="Open", width=70,
-                          command=lambda p=f: os.startfile(str(p))
+                          command=lambda p=f: _open_path(str(p))
                           ).pack(side="right", padx=4)
             ctk.CTkFrame(self._recordings_frame, height=1,
                          fg_color="#2e2e2e").pack(fill="x", padx=4)
@@ -935,6 +995,7 @@ class App(ctk.CTk):
                  "-o", output_path, url],
                 stdout=lf, stderr=lf,
                 creationflags=_NO_WINDOW,
+                **({"start_new_session": True} if sys.platform != "win32" else {}),
             )
 
         job_id = f"rec_{ts}"
@@ -1191,6 +1252,13 @@ class App(ctk.CTk):
                         command=self._autosave_settings).pack(
                             anchor="w", padx=8, pady=(0, 4))
 
+        self._auto_update_var = ctk.BooleanVar(
+            value=s.get("auto_update_check", True))
+        ctk.CTkCheckBox(win_card, text="Check for updates on startup",
+                        variable=self._auto_update_var,
+                        command=self._autosave_settings).pack(
+                            anchor="w", padx=8, pady=(0, 4))
+
         shortcut_row = ctk.CTkFrame(win_card, fg_color="transparent")
         shortcut_row.pack(fill="x", padx=8, pady=(0, 4))
 
@@ -1297,6 +1365,7 @@ class App(ctk.CTk):
             "default_output":        self._settings_output_entry.get().strip(),
             "notifications_enabled": self._settings_notif_var.get(),
             "close_to_tray":         self._close_to_tray_var.get(),
+            "auto_update_check":     self._auto_update_var.get(),
             "max_reminders":         max_rem,
             "reminder_interval_min": rem_interval,
             "poll_interval":         poll_interval,
@@ -1376,10 +1445,75 @@ class App(ctk.CTk):
                       fg_color="#444444", hover_color="#555555",
                       command=dlg.destroy).pack(side="left")
 
+    def _kickoff_update_check(self):
+        if self._update_check_done:
+            return
+        self._update_check_done = True
+        if not _load_settings().get("auto_update_check", True):
+            return
+
+        def run():
+            result = streamwatch.check_for_updates()
+            if result is None:
+                return
+            has_update, behind, msg = result
+            if has_update:
+                self.after(0, lambda: self._show_update_banner(behind, msg))
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _show_update_banner(self, commits_behind: int, latest_msg: str):
+        plural  = "" if commits_behind == 1 else "s"
+        text    = f"⬆  Update available — {commits_behind} new commit{plural}"
+        if latest_msg:
+            snippet = latest_msg if len(latest_msg) <= 60 else latest_msg[:57] + "…"
+            text += f":  {snippet}"
+        self._update_banner_text.configure(text=text)
+        self._update_banner.pack(fill="x", side="top", before=self._tabs)
+
+    def _dismiss_update_banner(self):
+        self._update_banner.pack_forget()
+
+    def _update_from_banner(self):
+        self._update_banner_btn.configure(state="disabled", text="Updating…")
+        self._update_banner_dismiss.configure(state="disabled")
+
+        def run():
+            steps = [
+                (["git", "pull"], {"cwd": str(streamwatch.SCRIPT_DIR), "timeout": 30}),
+                (["pip", "install", "--upgrade", "-r",
+                  str(streamwatch.SCRIPT_DIR / "requirements.txt")], {"timeout": 180}),
+            ]
+            for cmd, kwargs in steps:
+                try:
+                    result = subprocess.run(
+                        cmd, capture_output=True, text=True,
+                        creationflags=_NO_WINDOW, **kwargs)
+                    if result.returncode != 0:
+                        self.after(0, lambda: self._update_banner_text.configure(
+                            text="⚠  Update failed — see Settings → Maintenance"))
+                        self.after(0, lambda: self._update_banner_btn.configure(
+                            state="normal", text="Update & Restart"))
+                        self.after(0, lambda: self._update_banner_dismiss.configure(
+                            state="normal"))
+                        return
+                except Exception:
+                    self.after(0, lambda: self._update_banner_text.configure(
+                        text="⚠  Update failed — see Settings → Maintenance"))
+                    self.after(0, lambda: self._update_banner_btn.configure(
+                        state="normal", text="Update & Restart"))
+                    self.after(0, lambda: self._update_banner_dismiss.configure(
+                        state="normal"))
+                    return
+            self.after(0, self._restart_app)
+
+        threading.Thread(target=run, daemon=True).start()
+
     def _restart_app(self):
+        exe = (str(Path(sys.executable).with_name("pythonw.exe"))
+               if sys.platform == "win32" else sys.executable)
         subprocess.Popen(
-            [str(Path(sys.executable).with_name("pythonw.exe")),
-             str(streamwatch.SCRIPT_DIR / "gui.pyw")],
+            [exe, str(streamwatch.SCRIPT_DIR / "gui.pyw")],
             cwd=str(streamwatch.SCRIPT_DIR),
             creationflags=_NO_WINDOW,
         )

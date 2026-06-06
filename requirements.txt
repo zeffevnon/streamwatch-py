@@ -1,7 +1,8 @@
 customtkinter
 pillow
 pyyaml
-windows-toasts
+windows-toasts; sys_platform == "win32"
+desktop-notifier; sys_platform == "linux"
 pystray
 yt-dlp
 streamlink

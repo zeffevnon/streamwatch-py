@@ -12,6 +12,9 @@ streams.yaml
 settings.json
 icon/
 
+# Patch planning docs
+patches/
+
 # Editor / OS
 .vscode/
 .idea/

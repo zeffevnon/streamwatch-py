@@ -8,18 +8,19 @@ intervals before giving up until the next check cycle.
 
 import concurrent.futures
 import queue as _qmod
+import sys
 import threading
 import yaml
 import subprocess
 
-_NO_WINDOW = subprocess.CREATE_NO_WINDOW
+_NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 import time
 import json
 import urllib.request
 from pathlib import Path
 from datetime import datetime, timedelta
 
-__version__ = "1.1"
+__version__ = "1.2"
 
 # --- Config ---
 SCRIPT_DIR   = Path(__file__).parent
@@ -62,6 +63,20 @@ def _post_event(*args):
 
 def log(msg):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
+
+
+def output_path_available(output: str | None) -> bool:
+    if not output:
+        return False
+    try:
+        p = Path(output)
+        if p.exists():
+            return True
+        if p.drive:
+            return Path(p.drive + "\\").exists()
+        return True
+    except Exception:
+        return False
 
 
 def load_config():
@@ -117,6 +132,7 @@ def fetch_thumbnail(thumbnail_url, stream_name):
 
 
 def _get_toaster():
+    # Windows-only; only called from _notify_windows().
     global _toaster
     if _toaster is None:
         from windows_toasts import InteractableWindowsToaster
@@ -148,57 +164,108 @@ def _poll_sleep(seconds):
 
 
 def show_notification(name, title, thumbnail_path, auto_record=False):
-    """Fire a Windows toast notification with action buttons.
+    """Fire a desktop notification with action buttons.
 
-    Normal mode:      Record / Dismiss
-    auto_record mode: Skip Recording / Dismiss  (recording already started)
-
-    Button callbacks post directly to _toast_queue so the monitor loop
-    processes them within ~1 second rather than on the next 60-second cycle.
+    Routes to the appropriate platform backend. Buttons post directly to
+    _toast_queue so the monitor loop processes them within ~1 second.
     """
     if not NOTIFICATIONS_ENABLED:
         return
+
+    primary_label  = "Skip Recording" if auto_record else "Record"
+    primary_action = "skip_recording" if auto_record else "record"
+    body           = title or "Live now"
+    heading        = f"{name} is live!"
+
+    def on_action(action: str):
+        if action in ("record", "dismiss", "skip_recording"):
+            _toast_queue.put((name, action))
+
     try:
-        from windows_toasts import (
-            Toast, ToastButton, ToastDisplayImage, ToastImagePosition,
-        )
-        primary_label  = "Skip Recording" if auto_record else "Record"
-        primary_action = "skip_recording" if auto_record else "record"
-
-        def _on_activated(event):
-            action = event.arguments
-            if action in ("record", "dismiss", "skip_recording"):
-                _toast_queue.put((name, action))
-
-        images = []
-        if thumbnail_path:
-            try:
-                images = [ToastDisplayImage.fromPath(
-                    thumbnail_path,
-                    position=ToastImagePosition.AppLogo,
-                )]
-            except Exception:
-                pass
-
-        toast = Toast(
-            text_fields=[f"{name} is live!", title or "Live now"],
-            expiration_time=datetime.now() + timedelta(seconds=30),
-            actions=[
-                ToastButton(primary_label, primary_action),
-                ToastButton("Dismiss", "dismiss"),
-            ],
-            images=images,
-            on_activated=_on_activated,
-        )
-        _get_toaster().show_toast(toast)
+        if sys.platform == "win32":
+            _notify_windows(heading, body, thumbnail_path,
+                            primary_label, primary_action, on_action)
+        elif sys.platform.startswith("linux"):
+            _notify_linux(heading, body, thumbnail_path,
+                          primary_label, primary_action, on_action)
+        else:
+            log(f"No notification backend for platform: {sys.platform}")
     except Exception as e:
         log(f"Notification error: {e}")
+
+
+def _notify_windows(heading, body, thumbnail_path,
+                    primary_label, primary_action, on_action):
+    from windows_toasts import (
+        Toast, ToastButton, ToastDisplayImage, ToastImagePosition,
+    )
+
+    def _on_activated(event):
+        on_action(event.arguments)
+
+    images = []
+    if thumbnail_path:
+        try:
+            images = [ToastDisplayImage.fromPath(
+                thumbnail_path,
+                position=ToastImagePosition.AppLogo,
+            )]
+        except Exception:
+            pass
+
+    toast = Toast(
+        text_fields=[heading, body],
+        expiration_time=datetime.now() + timedelta(seconds=30),
+        actions=[
+            ToastButton(primary_label, primary_action),
+            ToastButton("Dismiss", "dismiss"),
+        ],
+        images=images,
+        on_activated=_on_activated,
+    )
+    _get_toaster().show_toast(toast)
+
+
+_linux_notifier = None
+
+
+def _get_linux_notifier():
+    global _linux_notifier
+    if _linux_notifier is None:
+        from desktop_notifier import DesktopNotifier
+        _linux_notifier = DesktopNotifier(app_name="streamwatch")
+    return _linux_notifier
+
+
+def _notify_linux(heading, body, thumbnail_path,
+                  primary_label, primary_action, on_action):
+    from desktop_notifier import Button
+
+    notifier = _get_linux_notifier()
+    notifier.send_sync(
+        title=heading,
+        message=body,
+        icon=thumbnail_path if thumbnail_path else None,
+        buttons=[
+            Button(title=primary_label,
+                   on_pressed=lambda: on_action(primary_action)),
+            Button(title="Dismiss",
+                   on_pressed=lambda: on_action("dismiss")),
+        ],
+        timeout=30,
+    )
 
 
 def start_recording(stream):
     name       = stream["name"]
     url        = stream["url"]
     output_dir = Path(stream["output"])
+
+    if not output_path_available(stream["output"]):
+        log(f"Cannot start recording for {name}: output path unavailable ({stream['output']})")
+        _post_event("recording_failed", name, "output_unavailable")
+        return
+
     output_dir.mkdir(parents=True, exist_ok=True)
 
     timestamp   = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -217,6 +284,7 @@ def start_recording(stream):
             stdout=log_file,
             stderr=log_file,
             creationflags=_NO_WINDOW,
+            **({"start_new_session": True} if sys.platform != "win32" else {}),
         )
     recording_processes[name] = proc
     recording_start_times[name] = time.time()
@@ -227,20 +295,22 @@ def start_recording(stream):
 
 
 def kill_recording(proc):
-    """Kill a recording process and its entire child tree.
-
-    Uses taskkill /F /T on Windows so any ffmpeg or python subprocesses
-    spawned by yt-dlp are also terminated.  Falls back to proc.terminate()
-    if taskkill is unavailable.
-    """
-    try:
-        subprocess.run(
-            ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
-            capture_output=True, timeout=5,
-            creationflags=_NO_WINDOW,
-        )
-    except Exception:
-        proc.terminate()
+    """Kill a recording process and its entire child tree."""
+    if sys.platform == "win32":
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                capture_output=True, timeout=5,
+                creationflags=_NO_WINDOW,
+            )
+        except Exception:
+            proc.terminate()
+    else:
+        import os as _os, signal as _signal
+        try:
+            _os.killpg(_os.getpgid(proc.pid), _signal.SIGTERM)
+        except Exception:
+            proc.terminate()
 
 
 def rename_parts(directory):
@@ -287,6 +357,48 @@ def cleanup_legacy_ipc():
                 pass
     if removed:
         log(f"Removed {removed} legacy IPC file(s) from state/.")
+
+
+def check_for_updates() -> "tuple[bool, int, str] | None":
+    """Check whether the remote git repo has commits we don't have locally.
+
+    Returns (has_update, commits_behind, latest_commit_msg) on success,
+    None on any failure (no network, not a git repo, git missing, etc.).
+    """
+    try:
+        result = subprocess.run(
+            ["git", "fetch", "--quiet"],
+            cwd=str(SCRIPT_DIR),
+            capture_output=True, text=True, timeout=15,
+            creationflags=_NO_WINDOW,
+        )
+        if result.returncode != 0:
+            return None
+
+        result = subprocess.run(
+            ["git", "rev-list", "--count", "HEAD..@{u}"],
+            cwd=str(SCRIPT_DIR),
+            capture_output=True, text=True, timeout=10,
+            creationflags=_NO_WINDOW,
+        )
+        if result.returncode != 0:
+            return None
+
+        behind = int(result.stdout.strip() or "0")
+        if behind == 0:
+            return (False, 0, "")
+
+        result = subprocess.run(
+            ["git", "log", "-1", "--pretty=%s", "@{u}"],
+            cwd=str(SCRIPT_DIR),
+            capture_output=True, text=True, timeout=10,
+            creationflags=_NO_WINDOW,
+        )
+        latest_msg = result.stdout.strip() if result.returncode == 0 else ""
+        return (True, behind, latest_msg)
+    except Exception as e:
+        log(f"Update check failed: {e}")
+        return None
 
 
 def load_state():
@@ -344,7 +456,10 @@ def monitor_loop(event_queue=None):
     cleanup_old_logs()
     cleanup_legacy_ipc()
     for stream in config.get("streams", []):
-        rename_parts(stream.get("output"))
+        try:
+            rename_parts(stream.get("output"))
+        except Exception as e:
+            log(f"Skipping rename_parts for {stream['name']}: {e}")
     log(f"streamwatch started — watching {len(config.get('streams', []))} stream(s).")
     log("Ctrl+C to stop.\n")
 

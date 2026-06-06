@@ -2,6 +2,8 @@
   "player_path": "C:\\Program Files\\DAUM\\PotPlayer\\PotPlayerMini64.exe",
   "default_output": "D:\\recordings",
   "notifications_enabled": true,
+  "close_to_tray": false,
+  "auto_update_check": true,
   "max_reminders": 3,
   "reminder_interval_min": 5,
   "poll_interval": 60
