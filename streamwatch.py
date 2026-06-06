@@ -20,7 +20,7 @@ import urllib.request
 from pathlib import Path
 from datetime import datetime, timedelta
 
-__version__ = "1.3.2"
+__version__ = "1.3.3"
 
 # --- Config ---
 SCRIPT_DIR   = Path(__file__).parent
@@ -80,8 +80,10 @@ def output_path_available(output: str | None) -> bool:
 
 
 def load_config():
+    if not CONFIG_FILE.exists():
+        return {"streams": []}
     with open(CONFIG_FILE, encoding="utf-8") as f:
-        return yaml.safe_load(f)
+        return yaml.safe_load(f) or {"streams": []}
 
 
 def is_live(url):

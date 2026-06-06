@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.3] — 2026-06-06
+
+### Fixed
+- App no longer crashes on launch when `streams.yaml` doesn't exist (fresh clone, new machine) — `load_config()` now returns an empty stream list so the GUI opens cleanly
+
 ## [1.3.2] — 2026-06-06
 
 ### Fixed
